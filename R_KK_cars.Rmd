@@ -1,0 +1,998 @@
+---
+title: "Used Car Analysis and price prediction"
+author: "Ali Khalil"
+date: "2025-04-11"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  fig.width = 7,
+  fig.height = 5,
+  dpi = 96,
+  echo = TRUE,
+  warning = FALSE,
+  message = FALSE,
+   fig.asp = 0.8  # Aspect ratio (width / height)
+)
+```
+
+
+```{r}
+knitr::opts_chunk$set(echo = TRUE)
+
+
+library(dplyr)
+library(ggplot2)
+library(readxl)
+library(stringr)
+library(stringi)
+library(ggplot2)
+library(tidyverse)
+library(scales)
+library(GGally)
+library(reshape2)
+library(fastDummies)
+library(leaps)
+library(carData)
+library(car)
+library(xgboost)
+
+```
+
+```{r}
+# Load the data
+#knitr::opts_knit$set(root.dir = "C:/Users/alikh/Desktop/R_kk")
+setwd("C:/Users/alikh/Desktop/R_kk")
+df <- read.csv("data_blocket.csv", fileEncoding = "UTF-8")
+
+head(df)
+str(df)
+summary(df)
+```
+
+
+```{r}
+# Remove spaces, commas, and any non-numeric characters (except for periods)
+df$Salesprice <- gsub("[^0-9\\.]", "", df$Salesprice)
+
+# Convert to numeric
+df$Salesprice <- as.numeric(df$Salesprice)
+head(df)
+sum(is.na(df$Salesprice))
+summary(df$Salesprice)
+```
+
+
+```{r}
+# Clean other numerical columns
+df$Mileage <- gsub("[^0-9\\.]", "", df$Mileage)
+df$Mileage <- as.numeric(df$Mileage)
+
+
+df$Horspower <- gsub("[^0-9]", "", df$Horspower)
+df$Horspower <- as.numeric(df$Horspower)
+
+df <- df[!is.na(df$Horspower), ]
+sum(is.na(df$Horspower))
+
+summary(df$Mileage)
+sum(is.na(df$Mileage))
+
+
+# Remove all kinds of space-like characters (including non-breaking spaces)
+df$Year <- gsub("[[:space:]\u00A0]", "", df$Year)
+
+# Convert to numeric
+df$Year <- as.numeric(df$Year)
+
+# Check how many NAs you still have
+sum(is.na(df$Year))
+summary(df$Year)
+
+table(df$Year)
+df <- df[df$Year != 2025, ]
+```
+
+
+```{r}
+# Create a new dataframe by copying the current df
+df_copy <- df
+
+```
+
+
+```{r}
+# Save the dataframe as an .RData file
+save(df_copy, file = "df_copy.RData")
+```
+
+
+```{r}
+df1 <- df
+```
+
+
+```{r}
+```
+
+
+```{r}
+unique(df1$Seller)
+
+unique(df1$Fueltype)
+
+unique(df1$Gearbox)
+
+unique(df1$Cartype)
+
+unique(df1$Drivetype)
+
+unique(df1$Color)
+
+unique(df1$Brand)
+
+unique(df1$Modell)
+
+unique(df1$Region)
+```
+```{r}
+df1 <- df1 %>%
+  mutate(
+    Fueltype = str_to_lower(str_trim(Fueltype)),  # lowercase and remove extra spaces
+    Fueltype = case_when(
+      Fueltype %in% c("bensin") ~ "Bensin",
+      Fueltype %in% c("diesel", "disel") ~ "Diesel",
+      Fueltype %in% c("el") ~ "El",
+      Fueltype %in% c("miljöbränsle", "miljöbränsle/hybrid") ~ "Miljöbränsle/Hybrid",
+      Fueltype == "" ~ NA_character_,
+      TRUE ~ str_to_title(Fueltype)  # fallback: capitalize first letter
+    )
+  )
+
+unique(df1$Fueltype)
+
+sum(is.na(df1$Fueltype))
+df1 <- df1 %>% filter(!is.na(Fueltype))
+unique(df1$Fueltype)
+
+```
+```{r}
+# Standardize Gearbox values (convert to title case)
+df1$Gearbox <- df1$Gearbox %>%
+  str_to_title()  # Converts to "Automat" or "Manuell"
+  
+# Check the unique values again
+unique(df1$Gearbox)
+```
+
+```{r}
+# Correct common spelling errors first
+df1$Cartype <- gsub("Halvkomni", "Halvkombi", df1$Cartype)
+
+# Standardize Cartype values (convert to title case)
+df1$Cartype <- str_to_title(df1$Cartype)
+
+# Check unique values again
+unique(df1$Cartype)
+```
+
+```{r}
+# Standardize the 'Color' column
+df1$Color <- gsub("Mörkblå|Ljusblå|Mörbllå", "Blå", df1$Color)
+df1$Color <- gsub("Mörkgrön|Ljusgrön|Grön", "Grön", df1$Color)
+df1$Color <- gsub("Mörkröd|Röd", "Röd", df1$Color)
+df1$Color <- gsub("Ljusbrun|Mörkbrun|Brun", "Brun", df1$Color)
+df1$Color <- gsub("Ljusgrå|Mörkgrå|Grå|grå", "Grå", df1$Color)
+df1$Color <- gsub("Vit|vit", "Vit", df1$Color)
+df1$Color <- gsub("Silver|Siver", "Silver", df1$Color)
+df1$Color <- gsub("Orange|Vít", "Orange", df1$Color)
+df1$Color <- gsub("Svart|svart", "Svart", df1$Color)
+
+# Check the unique values after cleaning
+unique(df1$Color)
+```
+```{r}
+df1$Color[df1$Color == ""] <- NA
+sum(is.na(df1$Color))
+df1 <- df1 %>% filter(!is.na(Color))
+unique(df1$Color)
+
+```
+```{r}
+# Convert everything to lowercase
+df1$Modell <- tolower(df1$Modell)
+
+# Standardize specific known variants and fix typos
+df1$Modell <- str_replace_all(df1$Modell, c(
+  "t-cross"        = "T-Cross",
+  "id.4"           = "ID.4",
+  "id.3"           = "ID.3",
+  "id.5"           = "ID.5",
+  "up!"            = "UP",
+  "up"             = "UP",
+  "new beetle"     = "New Beetle",
+  "california"     = "California",
+  "e-golf"         = "E-Golf",
+  "polo cross"     = "Polo Cross",
+  "turan"          = "Touran",
+  "gti"            = "GTI",
+  "cc"             = "CC",
+  "sciroCCo"       = "scirocco",
+  "lUPo"           = "lupo"
+))
+```
+
+```{r}
+unique(df1$Modell)
+
+```
+
+```{r}
+df1 %>%
+  filter(str_trim(str_to_lower(Modell)) %in% c("silver", "svart", "vit"))
+```
+```{r}
+#removin these three observations
+df1 <- df1 %>%
+  filter(!(str_trim(str_to_lower(Modell)) %in% c("silver", "svart", "vit")))
+
+```
+
+
+```{r}
+df1 %>%
+  filter(str_detect(str_to_lower(Modell), "crosstouran|tiguan allspace|new beetle|polo cross"))
+```
+```{r}
+#meging these 9 observation each with its coreespondant main model
+#i checked and theuy are almost alike so i merged them to have fewer models
+df1 <- df1 %>%
+  mutate(Modell = case_when(
+    str_detect(str_to_lower(str_trim(Modell)), "crosstouran") ~ "Touran",
+    str_detect(str_to_lower(str_trim(Modell)), "tiguan allspace") ~ "Tiguan",
+    str_detect(str_to_lower(str_trim(Modell)), "new beetle") ~ "Beetle",
+    str_detect(str_to_lower(str_trim(Modell)), "polo cross") ~ "Polo",
+    TRUE ~ Modell
+  ))
+
+```
+
+```{r}
+#Check for Missing Values
+#colSums(is.na(df1))
+df1 %>% summarise_all(~ sum(. == "", na.rm = TRUE))
+
+
+```
+```{r}
+#we have three missing value in driver type
+#we filled them with "Tvåhjulsdriven"
+df1 %>% duplicated() %>% sum()
+df1 %>% summarise(across(where(is.character), ~ n_distinct(.)))
+
+
+df1 %>% summarise_all(~ sum(. == "" | is.na(.) | . == 0 | is.null(.), na.rm = TRUE))
+unique(df1$Drivetype)
+sum(df1$Drivetype == "")
+df1 %>% filter(Drivetype == "")
+df1 <- df1 %>%
+  mutate(Drivetype = ifelse(Drivetype == "", "Tvåhjulsdriven", Drivetype))
+
+
+```
+
+
+<h1 style="font-size: 40px; font-weight: bold; margin-top: 40px;">Exploratory Data Analysis (EDA)</h1>
+
+
+```{r}
+df_clean <- df1
+df_clean2 <- df_clean
+```
+
+```{r}
+write.csv(df1, "df1_clean.csv", row.names = FALSE)
+
+```
+
+```{r}
+df1 %>%
+  arrange(desc(Salesprice)) %>%
+  dplyr::select(Salesprice, Brand, Modell, Year, Mileage) %>%
+  head(10)
+```
+```{r}
+#removing two outliers
+# First, find the top 2 prices
+top_prices <- df1 %>%
+  arrange(desc(Salesprice)) %>%
+  head(2) %>%
+  pull(Salesprice)
+# Then remove rows with those top prices
+df1 <- df1 %>%
+  filter(!(Salesprice %in% top_prices))
+
+
+```
+
+```{r}
+#the same with mileage 
+df1 %>%
+  arrange(desc(Mileage)) %>%
+  dplyr::select(Mileage, Brand, Modell, Year, Salesprice) %>%
+  head(10)
+
+# First, find the top 1
+top_mileage <- df1 %>%
+  arrange(desc(Mileage)) %>%
+  head() %>%
+  pull(Mileage)
+
+# Then remove row
+df1 <- df1 %>%
+  filter(!(Mileage %in% top_mileage))
+```
+
+
+
+```{r}
+df1 %>%
+  ggplot(aes(x = Salesprice)) +
+  geom_histogram(binwidth = 10000) +
+  scale_x_continuous(labels = label_comma()) +
+  theme_minimal()
+
+
+```
+```{r}
+df1 %>% dplyr::select(Salesprice, Mileage, Horspower, Year) %>% ggpairs()
+
+
+```
+```{r}
+
+# Step 2: Select only numeric columns and calculate the correlation matrix
+cor_matrix <- cor(df1[, sapply(df1, is.numeric)], use = "complete.obs")
+
+# Step 3: Melt the correlation matrix into long format
+cor_melted <- melt(cor_matrix)
+
+# Step 4: Create the heatmap using ggplot2
+library(ggplot2)
+
+ggplot(data = cor_melted, aes(x = Var1, y = Var2, fill = value)) +
+    geom_tile(color = "white") +
+    scale_fill_gradient2(low = "blue", high = "yellowgreen", mid = "white", 
+                         midpoint = 0, limit = c(-1, 1), space = "Lab", 
+                         name="Correlation") +
+    theme_minimal() +
+    theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1)) +
+    labs(x = "", y = "", title = "Correlation Matrix") +
+    geom_text(aes(label = sprintf("%.2f", value)), size = 3)
+
+
+```
+```{r}
+
+# Select numeric columns
+df1 %>% 
+  dplyr::select(dplyr::where(is.numeric)) %>% 
+  pivot_longer(everything(), names_to = "Variable", values_to = "Value") %>% 
+  ggplot(aes(x = Value, fill = Variable)) +
+  geom_histogram(bins = 30, color = "black", fill = "steelblue") +
+  facet_wrap(~ Variable, scales = "free", ncol = 3) +
+  scale_x_continuous(labels = scales::label_comma()) +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    legend.position = "none"
+  )
+
+
+```
+```{r}
+df1_cleaned <- df1 %>%
+  mutate(across(where(is.character), ~ stri_trans_general(., "Latin-ASCII")))  # Replace special chars with ASCII equivalents
+
+# Plot the cleaned data
+df1_cleaned %>%
+  dplyr::select(dplyr::where(is.character)) %>%
+  pivot_longer(everything(), names_to = "Category", values_to = "CategoryValue") %>%
+  ggplot(aes(x = CategoryValue)) +
+  geom_bar(color = "black", fill = "steelblue") +
+  facet_wrap(~ Category, scales = "free", ncol = 3) +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 90, hjust = 1),
+    legend.position = "none"
+  )
+
+```
+
+```{r}
+```
+
+```{r}
+df1 %>%
+  group_by(Gearbox) %>%
+  summarise(Average_Price = mean(Salesprice, na.rm = TRUE)) %>%
+  ggplot(aes(x = Gearbox, y = Average_Price, fill = Gearbox)) +
+  geom_bar(stat = "identity") +  # stat="identity" to use the computed average
+  scale_y_continuous(labels = scales::label_comma()) +  # Format y-axis with commas
+  theme_minimal() +
+  labs(
+    title = "Average Salesprice by Gearbox",
+    x = "Gearbox",
+    y = "Average Salesprice"
+  ) +
+  theme(
+    legend.title = element_blank(),
+    axis.text.x = element_text(angle = 45, hjust = 1)
+  )
+
+```
+```{r}
+df1 %>%
+  ggplot(aes(x = Mileage, y = Salesprice)) +
+  geom_point() +
+  scale_y_continuous(labels = scales::label_comma()) +  # Add this to format the Salesprice with commas
+  theme_minimal() +
+  labs(title = "Salesprice vs Mileage", x = "Mileage", y = "Salesprice")
+
+```
+```{r}
+df1 %>%
+  ggplot(aes(x = Year, y = Salesprice)) +
+  geom_point() +
+  scale_y_continuous(labels = scales::label_comma()) +  # Format the Salesprice axis
+  theme_minimal() +
+  labs(title = "Salesprice vs CarAge", x = "Year", y = "Salesprice")
+```
+```{r}
+df1 %>%
+  ggplot(aes(x = Horspower, y = Salesprice)) +
+  geom_point() +
+  scale_y_continuous(labels = scales::label_comma()) +  
+  theme_minimal() +
+  labs(title = "Salesprice vs Horspower", x = "Horspower", y = "Salesprice")
+```
+```{r}
+df1 %>%
+  ggplot(aes(x = Modell, y = Salesprice, fill = Modell)) +
+  geom_boxplot() +
+  scale_y_continuous(labels = scales::label_comma()) +
+  theme_minimal() +
+  labs(title = "Salesprice by Car Model", x = "Modell", y = "Salesprice") +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+```
+```{r}
+df1 %>%
+  ggplot(aes(x = Fueltype, y = Salesprice, fill = Fueltype)) +
+  geom_boxplot() +
+  scale_y_continuous(labels = scales::label_comma()) +
+  theme_minimal() +
+  labs(title = "Salesprice by Fueltype", x = "Fueltype", y = "Salesprice") +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+```
+```{r}
+df1 %>%
+  ggplot(aes(x = Color, y = Salesprice, fill = Color)) +
+  geom_boxplot() +
+  scale_y_continuous(labels = scales::label_comma()) +
+  theme_minimal() +
+  labs(title = "Salesprice by Car color", x = "Color", y = "Salesprice") +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+```
+```{r}
+df1 %>%
+  ggplot(aes(x = Cartype, y = Salesprice, fill = Cartype)) +
+  geom_boxplot() +
+  scale_y_continuous(labels = scales::label_comma()) +
+  theme_minimal() +
+  labs(title = "Salesprice by Cartype", x = "Cartype", y = "Salesprice") +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+```
+
+```{r}
+df1 %>%
+  ggplot(aes(x = Region, y = Salesprice, fill = Region)) +
+  geom_boxplot() +
+  scale_y_continuous(labels = scales::label_comma()) +
+  theme_minimal() +
+  labs(title = "Salesprice by Region", x = "Region", y = "Salesprice") +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+```
+```{r}
+df_model <- df1
+```
+
+
+<h1 style="font-size: 40px; font-weight: bold; margin-top: 40px;">Modelling </h1>
+
+```{r}
+df_model <- df1 %>%
+  dplyr::select(-Color, -Region, -Brand) %>%  # Explicitly call dplyr::select
+  mutate(Salesprice_log = log(Salesprice)) %>%
+  fastDummies::dummy_cols(
+    select_columns = c("Seller", "Fueltype", "Gearbox", "Cartype", "Drivetype", "Modell"), 
+    remove_selected_columns = TRUE,
+    remove_first_dummy = TRUE
+  )
+
+
+```
+
+<h1 style="font-size: 40px; font-weight: bold; margin-top: 40px;">Data split </h1>
+```{r}
+set.seed(123) 
+# 1. Split the Data into Train, Validation, and Test Sets
+set.seed(123)  # For reproducibility
+train_index <- sample(1:nrow(df_model), size = 0.6 * nrow(df_model))
+train_data <- df_model[train_index, ]
+temp_data <- df_model[-train_index, ]
+validation_index <- sample(1:nrow(temp_data), size = 0.5 * nrow(temp_data))
+validation_data <- temp_data[validation_index, ]
+test_data <- temp_data[-validation_index, ]
+
+```
+
+
+<h1 style="font-size: 40px; font-weight: bold; margin-top: 40px;">Linear model </h1>
+```{r}
+set.seed(123) 
+# 1. Add row_id to training data for tracking
+train_data$row_id <- seq_len(nrow(train_data))
+
+# 2. Standardize numeric features using training data stats
+scale_params <- train_data %>%
+  summarise(
+    Mileage_mean = mean(Mileage),
+    Mileage_sd = sd(Mileage),
+    Year_mean = mean(Year),
+    Year_sd = sd(Year),
+    Horspower_mean = mean(Horspower),
+    Horspower_sd = sd(Horspower)
+  )
+
+standardize <- function(df, params) {
+  df %>%
+    mutate(
+      Mileage = (Mileage - params$Mileage_mean) / params$Mileage_sd,
+      Year = (Year - params$Year_mean) / params$Year_sd,
+      Horspower = (Horspower - params$Horspower_mean) / params$Horspower_sd
+    )
+}
+
+# 3. Standardize and keep row_id
+train_scaled <- standardize(train_data, scale_params)
+
+# 4. Train the model (row_id is NOT used in model)
+lm_train_full <- lm(Salesprice_log ~ . - row_id, data = train_scaled)
+lm_stepwise <- step(lm_train_full, direction = "both", trace = 0)
+summary(lm_stepwise)
+
+```
+
+<h1 style="font-size: 20px; font-weight: bold; margin-top: 40px;">Validation of linear model </h1>
+```{r}
+# Predict on the validation set for the linear model
+validation_scaled <- standardize(validation_data, scale_params)
+pred_val_log <- predict(lm_stepwise, newdata = validation_scaled)
+actual_val_log <- validation_scaled$Salesprice_log
+
+# Back-transform predictions to the original scale
+pred_val_original <- exp(pred_val_log)
+actual_val_original <- exp(actual_val_log)
+
+# RMSE (on original scale)
+rmse_val <- sqrt(mean((pred_val_original - actual_val_original)^2))
+
+# MAE (on original scale)
+mae_val <- mean(abs(pred_val_original - actual_val_original))
+
+# R² (on original scale)
+sst <- sum((actual_val_original - mean(actual_val_original))^2)
+sse <- sum((actual_val_original - pred_val_original)^2)
+rsq_val <- 1 - sse / sst
+
+cat("Validation RMSE:", round(rmse_val, 4), "\n")
+cat("Validation MAE:", round(mae_val, 4), "\n")
+cat("Validation R²:", round(rsq_val, 4), "\n")
+
+
+```
+
+
+```{r}
+```
+
+```{r}
+
+```
+
+<h1 style="font-size: 40px; font-weight: bold; margin-top: 40px;">XGBoost </h1>
+```{r}
+library(xgboost)
+library(dplyr)
+set.seed(123)
+# Train XGBoost model
+dtrain <- xgb.DMatrix(data = as.matrix(train_data[, -which(names(train_data) == "Salesprice_log")]), label = train_data$Salesprice_log)
+xgb_model <- xgboost(data = dtrain, objective = "reg:squarederror", nrounds = 100)
+
+# Feature Importance for XGBoost
+importance_xgb <- xgb.importance(feature_names = colnames(train_data[, -which(names(train_data) == "Salesprice_log")]), model = xgb_model)
+print(importance_xgb)
+
+# Plot Feature Importance
+xgb.plot.importance(importance_xgb)
+
+#select top features 5 based on importance
+top_features_xgb <- importance_xgb$Feature[1:5]
+train_xgb_selected <- train_data[, c(top_features_xgb, "Salesprice_log")]
+
+# Re-train XGBoost model with selected features
+dtrain_selected <- xgb.DMatrix(data = as.matrix(train_xgb_selected[, -which(names(train_xgb_selected) == "Salesprice_log")]), label = train_xgb_selected$Salesprice_log)
+xgb_model_selected <- xgboost(data = dtrain_selected, objective = "reg:squarederror", nrounds = 100)
+```
+
+
+<h1 style="font-size: 20px; font-weight: bold; margin-top: 40px;">Validation of XGBoost </h1>
+```{r}
+# Predict on validation data
+# Filter top features to only those available in validation_data
+valid_top_features <- intersect(top_features_xgb, colnames(validation_data))
+
+# Warn if any features are missing
+missing_features <- setdiff(top_features_xgb, valid_top_features)
+if (length(missing_features) > 0) {
+  warning("The following features were missing in validation data and will be ignored: ", paste(missing_features, collapse = ", "))
+}
+
+# Create validation matrix
+# ✅ Step 1: Define the expected feature set (from training)
+full_features <- top_features_xgb
+
+# ✅ Step 2: Create a zero-filled matrix with those features
+dvalidation_mat <- matrix(0, nrow = nrow(validation_data), ncol = length(full_features))
+colnames(dvalidation_mat) <- full_features
+
+# ✅ Step 3: Fill in values where features exist in validation_data
+common_features <- intersect(full_features, colnames(validation_data))
+dvalidation_mat[, common_features] <- as.matrix(validation_data[, common_features])
+
+# ✅ Step 4: Create the DMatrix using the correctly shaped and named matrix
+dvalidation <- xgb.DMatrix(data = dvalidation_mat)
+
+# ✅ Step 5: Predict using your trained model
+pred_val_xgb <- predict(xgb_model_selected, dvalidation)
+
+
+ #Evaluation on validation set (using RMSE, MAE, and R²)
+rmse_xgb <- sqrt(mean((pred_val_xgb - validation_data$Salesprice_log)^2))
+mae_xgb <- mean(abs(pred_val_xgb - validation_data$Salesprice_log))
+sst_xgb <- sum((validation_data$Salesprice_log - mean(validation_data$Salesprice_log))^2)
+sse_xgb <- sum((validation_data$Salesprice_log - pred_val_xgb)^2)
+rsq_xgb <- 1 - sse_xgb / sst_xgb
+
+cat("XGBoost Validation RMSE:", round(rmse_xgb, 4), "\n")
+cat("XGBoost Validation MAE:", round(mae_xgb, 4), "\n")
+cat("XGBoost Validation R²:", round(rsq_xgb, 4), "\n")
+
+```
+
+
+
+```{r}
+# Transform predictions and actual values back to the original scale (real values)
+pred_val_real <- exp(pred_val_xgb)
+actual_real <- exp(validation_data$Salesprice_log)
+
+# Calculate RMSE on the real scale
+rmse_real <- sqrt(mean((pred_val_real - actual_real)^2))
+
+# Calculate MAE on the real scale
+mae_real <- mean(abs(pred_val_real - actual_real))
+
+# Calculate R² on the real scale
+sst_real <- sum((actual_real - mean(actual_real))^2)
+sse_real <- sum((actual_real - pred_val_real)^2)
+rsq_real <- 1 - sse_real / sst_real
+
+# Print results
+cat("XGBoost Validation RMSE (real scale):", round(rmse_real, 4), "\n")
+cat("XGBoost Validation MAE (real scale):", round(mae_real, 4), "\n")
+cat("XGBoost Validation R² (real scale):", round(rsq_real, 4), "\n")
+
+
+
+```
+
+
+<h1 style="font-size: 20px; font-weight: bold; margin-top: 40px;">Linear modelprediction on test set  </h1>
+```{r}
+# Predict on the test set for the linear model
+test_scaled <- standardize(test_data, scale_params)
+pred_test_log <- predict(lm_stepwise, newdata = test_scaled)
+actual_test_log <- test_scaled$Salesprice_log
+
+# Back-transform predictions to the original scale
+pred_test_original <- exp(pred_test_log)
+actual_test_original <- exp(actual_test_log)
+
+# RMSE (on original scale)
+rmse_test <- sqrt(mean((pred_test_original - actual_test_original)^2))
+
+# MAE (on original scale)
+mae_test <- mean(abs(pred_test_original - actual_test_original))
+
+# R² (on original scale)
+sst_test <- sum((actual_test_original - mean(actual_test_original))^2)
+sse_test <- sum((actual_test_original - pred_test_original)^2)
+rsq_test <- 1 - sse_test / sst_test
+
+# Print results
+cat("Linear Model Test Performance (Real Scale):\n")
+cat("  RMSE:", round(rmse_test, 2), "\n")
+cat("  MAE :", round(mae_test, 2), "\n")
+cat("  R²  :", round(rsq_test, 4), "\n")
+
+
+```
+
+
+ 
+<h1 style="font-size: 20px; font-weight: bold; margin-top: 40px;">XGBoost on test set </h1>
+```{r}
+# Prepare the DMatrix for test data using the same features
+# Ensure test_data contains all the features from top_features_xgb
+# First, identify and add any missing features to test_data with NA (or 0)
+missing_features <- setdiff(top_features_xgb, colnames(test_data))
+for (feature in missing_features) {
+  test_data[[feature]] <- NA  # Or use 0, depending on the model's behavior with missing values
+}
+
+# Select only the features that exist in both the training and test data
+valid_features <- intersect(top_features_xgb, colnames(test_data))
+
+# Create the DMatrix for the test data with the valid (common) features
+dtest <- xgb.DMatrix(data = as.matrix(test_data[, valid_features]))
+
+
+# Predict log prices
+pred_test_log <- predict(xgb_model_selected, dtest)
+
+# Evaluate log-scale performance
+rmse_log <- sqrt(mean((pred_test_log - test_data$Salesprice_log)^2))
+mae_log <- mean(abs(pred_test_log - test_data$Salesprice_log))
+rsq_log <- 1 - sum((test_data$Salesprice_log - pred_test_log)^2) / 
+                sum((test_data$Salesprice_log - mean(test_data$Salesprice_log))^2)
+
+cat("XGBoost Test Performance (Log Scale):\n")
+cat("  RMSE:", round(rmse_log, 4), "\n")
+cat("  MAE :", round(mae_log, 4), "\n")
+cat("  R²  :", round(rsq_log, 4), "\n")
+
+# Convert predictions back to real prices
+pred_test_real <- exp(pred_test_log)
+actual_test_real <- exp(test_data$Salesprice_log)
+
+# Evaluate real-scale performance
+rmse_real <- sqrt(mean((pred_test_real - actual_test_real)^2))
+mae_real <- mean(abs(pred_test_real - actual_test_real))
+rsq_real <- 1 - sum((actual_test_real - pred_test_real)^2) / 
+                 sum((actual_test_real - mean(actual_test_real))^2)
+
+cat("\nXGBoost Test Performance (Real Scale):\n")
+cat("  RMSE:", round(rmse_real, 2), "\n")
+cat("  MAE :", round(mae_real, 2), "\n")
+cat("  R²  :", round(rsq_real, 4), "\n")
+
+```
+
+<h1 style="font-size: 20px; font-weight: bold; margin-top: 40px;">Results comparison </h1>
+```{r}
+comparison_df <- data.frame(
+  Metric = c("RMSE", "MAE", "R2"),
+  Linear_Model = c(round(rmse_test, 2), round(mae_test, 2), round(rsq_test, 4)),
+  XGBoost_Model = c(round(rmse_real, 2), round(mae_real, 2), round(rsq_real, 4))
+)
+
+# Print the table
+print(comparison_df)
+
+```
+<h1 style="font-size: 20px; font-weight: bold; margin-top: 40px;">XGboost had a better performance </h1>
+
+#calculating the residuals and plotting them
+```{r}
+# Residuals (log scale) for XGBoost
+residuals_xgb_log <- test_data$Salesprice_log - pred_test_log
+
+# Fitted values (XGBoost predictions)
+fitted_xgb_log <- pred_test_log
+
+# Create a data frame for plotting
+residuals_xgb_df <- data.frame(Fitted = fitted_xgb_log, Residuals = residuals_xgb_log)
+
+# Plot Residuals vs Fitted (XGBoost - Log Scale) with manual axis limits
+ggplot(residuals_xgb_df, aes(x = Fitted, y = Residuals)) +
+  geom_point(alpha = 0.6, color = "steelblue") +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "red") +
+  scale_x_continuous(limits = c(9, 13)) +
+  scale_y_continuous(limits = c(-2, 2)) +
+  labs(title = "Residuals vs Fitted (XGBoost - Log Scale)",
+       x = "Fitted Values (log scale)",
+       y = "Residuals (log scale)") +
+  theme_minimal()
+
+```
+
+```{r}
+# Residuals from test set for XGBoost on log scale
+residuals_xgb_log <- test_data$Salesprice_log - pred_test_log
+
+# Plot histogram for XGBoost residuals (log scale)
+hist(residuals_xgb_log,
+     breaks = 30,
+     col = "skyblue",
+     main = "Histogram of Residuals (XGBoost)",
+     xlab = "Residuals",
+     border = "white")
+
+```
+```{r}
+
+# QQ plot for residuals (XGBoost - Log Scale)
+residuals_xgb_log <- test_data$Salesprice_log - pred_test_log
+
+# Create QQ plot without axes
+qqnorm(residuals_xgb_log,
+       main = "QQ Plot of Residuals",
+       col = "blue",
+       xaxt = "n",     # Turn off x-axis
+       yaxt = "n",     # Turn off y-axis
+       xlim = c(-3, 3),# Set x-axis limits
+       ylim = c(-0.2, 0.1)) # Set y-axis limits
+
+# Add QQ reference line
+qqline(residuals_xgb_log, col = "red")
+
+# Custom x-axis
+axis(side = 1, at = seq(-3, 3, by = 1))  # ticks at -3, -2, -1, 0, 1, 2, 3
+
+# Custom y-axis
+axis(side = 2, at = c(-0.2, -0.1, 0, 0.1))
+```
+```{r}
+# Leverage-like statistic for XGBoost (log scale)
+leverage_xgb_log <- abs(residuals_xgb_log) / (1 + abs(residuals_xgb_log))
+
+# Plot leverage with custom axes
+plot(pred_test_log, leverage_xgb_log, 
+     xlab = "Fitted Values", 
+     ylab = "Leverage-like Statistic", 
+     main = "Leverage Plot",
+     xaxt = "n",          # Turn off x-axis
+     yaxt = "n",          # Turn off y-axis
+     ylim = c(0, 0.15),   # Set y-axis limits
+     xlim = c(9, 13))     # Set x-axis limits
+
+# Add red horizontal reference line
+abline(h = 2 * mean(leverage_xgb_log), col = "red")
+
+# Custom x-axis
+axis(side = 1, at = 9:13)
+
+# Custom y-axis
+axis(side = 2, at = c(0, 0.05, 0.1, 0.15))
+
+```
+
+<h1 style="font-size: 20px; font-weight: bold; margin-top: 40px;">Confidence Interval and Prediction Interval  </h1>
+```{r}
+
+error_sd <- sd(pred_test_log - test_data$Salesprice_log)
+
+# Confidence Interval (e.g. 95%)
+pred_ci_lower <- pred_test_log - 1.96 * error_sd
+pred_ci_upper <- pred_test_log + 1.96 * error_sd
+
+# Prediction Interval (e.g. wider)
+pred_pi_lower <- pred_test_log - 2.5 * error_sd
+pred_pi_upper <- pred_test_log + 2.5 * error_sd
+
+# Convert log predictions back to real prices
+pred_test_real <- exp(pred_test_log)
+
+# Confidence intervals (CI) for real values
+pred_ci_lower_real <- exp(pred_ci_lower)
+pred_ci_upper_real <- exp(pred_ci_upper)
+
+# Prediction intervals (PI) for real values
+pred_pi_lower_real <- exp(pred_pi_lower)
+pred_pi_upper_real <- exp(pred_pi_upper)
+
+# Create a data frame with actual, predicted, CI, and PI (real values)
+intervals_df_real <- data.frame(
+  Actual = exp(test_data$Salesprice_log),  # Actual values converted back to real scale
+  Predicted = pred_test_real,  # Predicted values on real scale
+  CI_Lower = pred_ci_lower_real,  # Lower bound of CI (real scale)
+  CI_Upper = pred_ci_upper_real,  # Upper bound of CI (real scale)
+  PI_Lower = pred_pi_lower_real,  # Lower bound of PI (real scale)
+  PI_Upper = pred_pi_upper_real   # Upper bound of PI (real scale)
+)
+
+# Display the table with real values and intervals
+print(head(intervals_df_real, 10))
+
+```
+
+
+
+```{r}
+# Plot: Actual vs Predicted with Confidence and Prediction Intervals
+ggplot(intervals_df_real, aes(x = Predicted)) +
+  geom_point(aes(y = Actual), color = "blue") +
+  geom_ribbon(aes(ymin = CI_Lower, ymax = CI_Upper), fill = "lightblue", alpha = 0.3) +
+  geom_ribbon(aes(ymin = PI_Lower, ymax = PI_Upper), fill = "lightgreen", alpha = 0.3) +
+  labs(title = "Actual vs Predicted with Confidence and Prediction Intervals",
+       x = "Predicted Sales Price", 
+       y = "Actual Sales Price") +
+  theme_minimal()
+```
+```{r}
+
+top_features_xgb 
+```
+
+
+<h1 style="font-size: 20px; font-weight: bold; margin-top: 40px;">Price prediction for a new data set  </h1>
+```{r}
+# 1. New car data
+new_cars_data <- data.frame(
+  Salesprice = c(23000, 284900, 229800, 209800, 89800, 40000, 208900, 129900, 109900, 178800),
+  Mileage = c(21000, 7088, 9526, 10084, 15599, 24041, 12577, 6300, 19739, 6340),
+  row_id = c(1501, 1502, 1503, 1504, 1505, 1506, 1507, 1508, 1509, 1510),  
+  Year = c(2008, 2021, 2021, 2017, 2017, 2005, 2020, 2014, 2012, 2018),
+  Horspower = c(102, 151, 218, 191, 191, 175, 150, 105, 170, 111)
+)
+
+# 2. Clean feature list first
+top_features_xgb <- top_features_xgb[!is.na(top_features_xgb) & top_features_xgb != ""]
+
+# 3. Ensure all top features are present and ordered
+missing_features <- setdiff(top_features_xgb, colnames(new_cars_data))
+for (feature in missing_features) {
+  new_cars_data[[feature]] <- 0
+}
+new_cars_data <- new_cars_data[, top_features_xgb]
+
+# 4. Predict log prices and convert to real prices
+dnew <- xgb.DMatrix(data = as.matrix(new_cars_data))
+pred_new_log <- predict(xgb_model_selected, dnew)
+pred_new_price <- exp(pred_new_log)
+
+# 5. Create comparison table
+comparison_table <- new_cars_data[, setdiff(top_features_xgb, "Salesprice")]
+comparison_table$Actual_Price <- new_cars_data$Salesprice
+comparison_table$Predicted_Price <- pred_new_price
+comparison_table$Error_Percent <- round((comparison_table$Predicted_Price - comparison_table$Actual_Price) / comparison_table$Actual_Price * 100, 2)
+
+# 6. View results
+print(comparison_table)
+
+```
+
+```{r}
+
+```
+
+```{r}
+
+
+```
+```{r}
+
+```
+
